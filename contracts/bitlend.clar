@@ -176,3 +176,45 @@
         ERR-INSUFFICIENT-COLLATERAL
     ))
 )
+
+;; Liquidation Function
+(define-public (liquidate (user principal))
+    (let (
+        (user-pos (unwrap! (map-get? user-positions { user: user }) ERR-LOAN-NOT-FOUND))
+        (collateral (get total-collateral user-pos))
+        (borrowed (get total-borrowed user-pos))
+        (ratio (get-collateral-ratio collateral borrowed))
+    )
+    (asserts! (not (is-eq user tx-sender)) ERR-NOT-AUTHORIZED) ;; Prevent self-liquidation
+    (asserts! (> borrowed u0) ERR-INVALID-AMOUNT) ;; Ensure there's debt to liquidate
+    (if (< ratio (var-get liquidation-threshold))
+        (begin
+            ;; Transfer collateral to liquidator with penalty
+            (try! (as-contract (stx-transfer? collateral (as-contract tx-sender) tx-sender)))
+            ;; Clear user position safely
+            (map-delete user-positions { user: user })
+            (var-set total-deposits (- (var-get total-deposits) collateral))
+            (var-set total-borrows (- (var-get total-borrows) borrowed))
+            (ok true)
+        )
+        ERR-LIQUIDATION-FAILED
+    ))
+)
+
+;; Read-Only Functions
+(define-read-only (get-user-position (user principal))
+    (default-to
+        { total-collateral: u0, total-borrowed: u0, loan-count: u0 }
+        (map-get? user-positions { user: user })
+    )
+)
+
+(define-read-only (get-protocol-stats)
+    {
+        total-deposits: (var-get total-deposits),
+        total-borrows: (var-get total-borrows),
+        minimum-collateral-ratio: (var-get minimum-collateral-ratio),
+        liquidation-threshold: (var-get liquidation-threshold),
+        protocol-fee: (var-get protocol-fee)
+    }
+)
